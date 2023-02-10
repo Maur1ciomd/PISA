@@ -1,0 +1,23 @@
+---
+title: "PISA"
+output: html_notebook
+---
+```{r}
+install.packages("learningtower")
+```
+
+```{r}
+library('learningtower')
+```
+
+```{r}
+student_data_all <- load_student("all")
+```
+
+```{r}
+table(student_data_all$country)
+```
+```{r}
+table(student_data_all$year)
+```
+

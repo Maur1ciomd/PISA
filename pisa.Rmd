@@ -1,0 +1,543 @@
+---
+title: "pisa"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(intsvy)
+library(haven)
+library(caret)
+library(ggplot2)
+library(tidyr)
+library(glmnet)
+library(caTools)
+library(readxl)
+library(tidyverse)
+library(writexl)
+library(caTools)
+library(xgboost)
+library(DiagrammeR)
+```
+
+```{r}
+temp_metrics <- read_xlsx(path = "/Users/mauriciodarcourt/Downloads/bkg/pisa_ms_bkg_read_stu_compendium.xlsx")
+col.readvars <- temp_metrics$metrics
+```
+
+```{r}
+
+stu_headers <- read_xlsx(path = '/Users/mauriciodarcourt/Documents/Pisa/data/2018/headers.xlsx')
+stu_headers_list <- stu_headers$stu_headers
+```
+
+
+```{r}
+stu_headers
+```
+
+######Grabbing all variables measured in pisa
+
+```{r}
+
+df <- data.frame(stu_headers)
+#write_xlsx(df,path = "/Users/mauriciodarcourt/Documents/Pisa/data/2018/headers.xlsx")
+```
+
+```{r}
+check <- function(list1,list2){
+  
+  temp_list <- list()
+  for(x in list1){
+    if ((x %in% (list2))){
+      temp_list <- append(temp_list,x)
+    }
+  }
+return(temp_list)
+}
+
+```
+
+```{r}
+a.check <- check(col.readvars,stu_headers_list)
+a <- do.call(rbind.data.frame,a.check)
+```
+
+```{r}
+pisa <- pisa.select.merge(folder = "/Users/mauriciodarcourt/Documents/Pisa/data/2018/final",student.file = "CY07_MSU_STU_QQQ.sav", school.file = "CY07_MSU_SCH_QQQ.sav",student= a.check
+
+)
+
+```
+
+###CLeaning dataset and piecing together
+
+```{r}
+#identifier data[,c("CNT",)]
+id <- data.frame(pisa$CNT)
+body <- pisa[,names(pisa) %in% a$c..ST004D01T....ST011Q01TA....ST011Q02TA....ST011Q03TA....ST011Q04TA...]
+
+start = match("PV1READ",names(pisa))
+end = match("PV10READ",names(pisa))
+
+score<- data.frame(pisa[,start:end])
+score <- rowMeans(score)
+clean.data <- data.frame(id , body, score)
+clean.data <- clean.data[complete.cases(clean.data),]
+cc <- sum(complete.cases(clean.data))
+```
+
+```{r}
+table(clean.data$pisa.CNT)
+```
+
+Factors for categorical variables
+
+```{r}
+for (x in 1:90){
+  
+  clean.data[,x:x] <- as.factor(clean.data[,x:x])  
+}
+  
+```
+
+Create training and testing split
+```{r}
+
+set.seed(101) 
+sample = sample.split(clean.data$REPEAT, SplitRatio = .7)
+train = subset(clean.data, sample == TRUE)
+test  = subset(clean.data, sample == FALSE)
+```
+
+linear model
+```{r}
+model <- lm(score ~ . ,data = train,)
+```
+
+lm model results
+```{r}
+summary(model)
+```
+
+accuracy linear model 
+```{r}
+pred.train <- predict(model, newdata=train) #R2 train
+pred.test <- predict(model, newdata=test)   #R2 test
+
+lin.reg.R2.train <- R2(pred.train,train$score)
+lin.reg.MAE.train <-mean(abs(train$score-pred.train))
+lin.reg.RMSE.train <-sqrt(mean((train$score-pred.train)^2))
+
+lin.reg.R2.test <- R2(pred.test,test$score)                 
+lin.reg.MAE.test <-mean(abs(test$score-pred.test))
+lin.reg.RMSE.test <-sqrt(mean((test$score-pred.test)^2))
+
+linear.summary <- data.frame(
+             train.r2 = lin.reg.R2.train,
+             train.MAE = lin.reg.MAE.train,
+             train.RMSE = lin.reg.RMSE.train,
+             test.r2 = lin.reg.R2.test,
+             test.MAE = lin.reg.MAE.test,
+             test.RMSE = lin.reg.RMSE.test )
+
+print(linear.summary)
+             
+```
+
+```{r}
+library(rpart)
+library(randomForest)
+library(rpart.plot)
+```
+
+```{r}
+cv.trees = train(y = train$score, x = subset(train, select = -c(score))  , method = "rpart", 
+                 trControl = trainControl(method = "cv", number = 10), 
+                 tuneGrid = data.frame(.cp = seq(.00002,.002,.00002)))
+pdf('CART.pdf',12,12)
+prp(cv.trees$finalModel,varlen=0,faclen=0,digits=3) 
+dev.off()
+
+best.tree <- cv.trees$finalModel
+```
+
+```{r}
+set.seed(123)
+best.rf <- randomForest(score~. ,data = train )
+```
+
+```{r}
+#predict cart
+cart.train.pred <- predict(best.tree, newdata =train )
+cart.test.pred <- predict(best.tree, newdata = test)
+
+
+CART.R2.train <- R2(cart.train.pred,train$score)
+CART.MAE.train <- mean(abs(train$score-cart.train.pred))
+CART.RMSE.train <- sqrt(mean((train$score-cart.train.pred)^2))
+
+CART.R2.test <- R2(cart.test.pred,test$score)
+CART.MAE.test <- mean(abs(test$score-cart.test.pred))
+CART.RMSE.test <- sqrt(mean((test$score-cart.test.pred)^2))
+
+#predict RF
+
+#rf.train.pred <- predict(best.rf,newdata = train)
+#rf.test.pred <- predict(best.rf,newdata = test)
+
+#RF.R2.train <- R2(rf.train.pred,train$score)
+#RF.MAE.train <- mean(abs(train$score-rf.train.pred))
+#RF.RMSE.train <- sqrt(mean((train$score-rf.train.pred)^2))
+
+
+#RF.R2.test <- R2(rf.test.pred,test$score)
+#RF.MAE.test <- mean(abs(test$score-rf.test.pred))
+#RF.RMSE.test <- sqrt(mean((test$score-rf.test.pred)^2))
+```
+
+```{r}
+# Summary
+
+a = "Linear"
+b = "Cart"
+c = "Rf"
+summary_statistics <- data.frame(
+  row.name = c(a,b,c),
+  IS.R2 = c(lin.reg.R2.train,CART.R2.train,RF.R2.train),
+  IS.MAE = c(lin.reg.MAE.train,CART.MAE.train,RF.MAE.train),
+  IS.RMSE = c(lin.reg.RMSE.train,CART.RMSE.train,RF.RMSE.train),
+  OOS.R2 = c(lin.reg.R2.test,CART.R2.test,RF.R2.test),
+  OOS.MAE = c(lin.reg.MAE.test,CART.MAE.test,RF.MAE.test),
+  OOS.RMSE = c(lin.reg.RMSE.test,CART.RMSE.test,RF.RMSE.test)
+)
+```
+
+```{r}
+print(summary_statistics)
+```
+
+------------------------------------------------------------------------
+
+Sub-setting per Country
+
+```{r}
+espana.pisa <- subset(clean.data,clean.data$pisa.CNT == 'ESP')
+
+```
+
+```{r}
+
+set.seed(101) 
+sample = sample.split(espana.pisa$IMMIG, SplitRatio = .7)
+espana.train = subset(espana.pisa, sample == TRUE)
+espana.test  = subset(espana.pisa, sample == FALSE)
+```
+
+```{r}
+espana.model <- lm(score ~ . ,data = espana.train[,2:95],)
+```
+
+```{r}
+summary(espana.model)
+```
+
+```{r}
+cv.trees = train(y = espana.train$score, x = subset(espana.train, select = -c(score))  , method = "rpart", 
+                 trControl = trainControl(method = "cv", number = 10), 
+                 tuneGrid = data.frame(.cp = seq(.00002,.002,.00002)))
+pdf('spaincheck.pdf',12,12)
+prp(cv.trees$finalModel,varlen=0,faclen=0,digits=3) 
+dev.off()
+
+best.tree <- cv.trees$finalModel
+```
+
+```{r}
+set.seed(123)
+best.rf <- randomForest(score~. ,data = espana.train[,2:95] )
+```
+
+
+
+```{r}
+spain.boost <- 
+  
+  xgboost(
+    data = data.matrix(espana.train[, 2:94]),
+    label = espana.train$score,
+    nrounds = 1000,
+    objective = "reg:squarederror",
+    early_stopping_rounds = 3,
+    max_depth = 6,
+    eta = .25
+      
+  )
+
+```
+
+```{r}
+pred_xgb <- predict(spain.boost, data.matrix(espana.test[, 2:94]))
+
+yhat <- pred_xgb
+y <- espana.test$score
+postResample(yhat, y)
+
+r <- y - yhat
+plot(r, ylab = "residuals", )
+
+plot(y,
+     yhat,
+     xlab = "actual",
+     ylab = "predicted",
+     )
+abline(lm(yhat ~ y))
+
+#plot first 3 trees of model
+xgb.plot.tree(model = spain.boost, trees = 0:2)
+
+importance_matrix <- xgb.importance(model = spain.boost)
+xgb.plot.importance(importance_matrix, xlab = "Feature Importance")
+
+```
+```{r}
+#grid search
+#create hyperparameter grid
+hyper_grid <- expand.grid(max_depth = seq(3, 6, 1),
+                          eta = seq(.2, .35, .01))
+xgb_train_rmse <- NULL
+xgb_test_rmse <- NULL
+
+for (j in 1:nrow(hyper_grid)) {
+  set.seed(123)
+  m_xgb_untuned <- xgb.cv(
+    data = data.matrix(train[, 2:94]),
+    label = train$score,
+    nrounds = 1000,
+    objective = "reg:squarederror",
+    early_stopping_rounds = 3,
+    nfold = 5,
+    max_depth = hyper_grid$max_depth[j],
+    eta = hyper_grid$eta[j]
+  )
+  
+  xgb_train_rmse[j] <- m_xgb_untuned$evaluation_log$train_rmse_mean[m_xgb_untuned$best_iteration]
+  xgb_test_rmse[j] <- m_xgb_untuned$evaluation_log$test_rmse_mean[m_xgb_untuned$best_iteration]
+  
+  cat(j, "\n")
+}
+
+#ideal hyperparamters
+hyper_grid[which.min(xgb_test_rmse), ]
+```
+
+
+```{r}
+all.boost <- 
+  
+  xgboost(
+    data = data.matrix(train[, 2:94]),
+    label = train$score,
+    nrounds = 1000,
+    objective = "reg:squarederror",
+    early_stopping_rounds = 3,
+    max_depth = 6,
+    eta = .25
+  )
+
+```
+
+
+```{r}
+pred_xgb.all <- predict(all.boost, data.matrix(test[, 2:94]))
+
+yhat <- pred_xgb.all
+y <- test$score
+postResample(yhat, y)
+
+r <- y - yhat
+plot(r, ylab = "residuals", )
+
+plot(y,
+     yhat,
+     xlab = "actual",
+     ylab = "predicted",
+     )
+abline(lm(yhat ~ y))
+
+#plot first 3 trees of model
+xgb.plot.tree(model = all.boost, trees = 0:2)
+
+importance_matrix <- xgb.importance(model = all.boost)
+xgb.plot.importance(importance_matrix, xlab = "Feature Importance")
+```
+
+
+```{r}
+pred.train <- predict(espana.model, newdata=espana.train) #R2 train
+pred.test <- predict(espana.model, newdata=espana.test)   #R2 test
+
+lin.reg.R2.espana.train <- R2(pred.train,espana.train$score)
+lin.reg.MAE.espana.train <-mean(abs(espana.train$score-pred.train))
+lin.reg.RMSE.espana.train <-sqrt(mean((espana.train$score-pred.train)^2))
+
+lin.reg.R2.espana.test <- R2(pred.test,espana.test$score)                 
+lin.reg.MAE.espana.test <-mean(abs(espana.test$score-pred.test))
+lin.reg.RMSE.espana.test <-sqrt(mean((espana.test$score-pred.test)^2))
+
+linear.summary <- data.frame(
+             train.r2 = lin.reg.R2.espana.train,
+             train.MAE = lin.reg.MAE.espana.train,
+             train.RMSE = lin.reg.RMSE.espana.train,
+             test.r2 = lin.reg.R2.espana.test,
+             test.MAE = lin.reg.MAE.espana.test,
+             test.RMSE = lin.reg.RMSE.espana.test )
+
+print(linear.summary)
+             
+```
+
+```{r}
+#predict cart
+cart.espana.train.pred <- predict(best.tree, newdata =espana.train )
+cart.espana.test.pred <- predict(best.tree, newdata = espana.test)
+
+
+CART.R2.espana.train <- R2(cart.espana.train.pred,espana.train$score)
+CART.MAE.espana.train <- mean(abs(espana.train$score-cart.espana.train.pred))
+CART.RMSE.espana.train <- sqrt(mean((espana.train$score-cart.espana.train.pred)^2))
+
+CART.R2.espana.test <- R2(cart.espana.test.pred,espana.test$score)
+CART.MAE.espana.test <- mean(abs(espana.test$score-cart.espana.test.pred))
+CART.RMSE.espana.test <- sqrt(mean((espana.test$score-cart.espana.test.pred)^2))
+
+#predict RF
+
+rf.espana.train.pred <- predict(best.rf,newdata = espana.train)
+rf.espana.test.pred <- predict(best.rf,newdata = espana.test)
+
+RF.R2.espana.train <- R2(rf.espana.train.pred,espana.train$score)
+RF.MAE.espana.train <- mean(abs(espana.train$score-rf.espana.train.pred))
+RF.RMSE.espana.train <- sqrt(mean((espana.train$score-rf.espana.train.pred)^2))
+
+
+RF.R2.espana.test <- R2(rf.espana.test.pred,espana.test$score)
+RF.MAE.espana.test <- mean(abs(espana.test$score-rf.espana.test.pred))
+RF.RMSE.espana.test <- sqrt(mean((espana.test$score-rf.espana.test.pred)^2))
+```
+
+```{r}
+# Summary
+
+a = "Linear"
+b = "Cart"
+c = "Rf"
+summary_statistics <- data.frame(
+  row.name = c(a,b,c),
+  IS.R2 = c(lin.reg.R2.espana.train,CART.R2.espana.train,RF.R2.espana.train),
+  IS.MAE = c(lin.reg.MAE.espana.train,CART.MAE.espana.train,RF.MAE.espana.train),
+  IS.RMSE = c(lin.reg.RMSE.espana.train,CART.RMSE.espana.train,RF.RMSE.espana.train),
+  OOS.R2 = c(lin.reg.R2.espana.test,CART.R2.espana.test,RF.R2.espana.test),
+  OOS.MAE = c(lin.reg.MAE.espana.test,CART.MAE.espana.test,RF.MAE.espana.test),
+  OOS.RMSE = c(lin.reg.RMSE.espana.test,CART.RMSE.espana.test,RF.RMSE.espana.test)
+)
+```
+
+```{r}
+print(summary_statistics)
+```
+
+Lasso regression to lower variables needed
+
+```{r}
+library(glmnet)
+```
+
+```{r}
+cv_model <- cv.glmnet(data.matrix(espana.pisa[,2:94]),espana.pisa$score, alpha = 1)
+```
+
+```{r}
+best_lambda <- cv_model$lambda.min
+best_lambda
+plot(cv_model)
+```
+
+```{r}
+country <- glmnet(data.matrix(espana.pisa[,2:94]),espana.pisa$score, alpha = 1, lambda = best_lambda)
+coef(country)
+```
+
+```{r}
+y_predicted <- predict(country, s = best_lambda, newx = data.matrix(espana.test[,2:94]))
+
+#find SST and SSE
+sst <- sum((espana.test$score - mean(espana.test$score))^2)
+sse <- sum((y_predicted - espana.test$score)^2)
+
+#find R-Squared
+rsq <- 1 - sse/sst
+rsq
+```
+
+```{r}
+
+cv_all <- cv.glmnet(data.matrix(clean.data[,1:94]),clean.data$score, alpha = 1)
+```
+
+```{r}
+all.lambda <- cv_all$lambda.min
+all.lambda
+plot(cv_all)
+```
+
+```{r}
+all.country <- glmnet(data.matrix(train[,1:94]),train$score, alpha = 1, lambda = all.lambda)
+coef(all.country)
+```
+
+```{r}
+y_predicted <- predict(all.country, s = all.lambda, newx = data.matrix(test[,1:94]))
+
+#find SST and SSE
+sst <- sum((test$score - mean(test$score))^2)
+sse <- sum((y_predicted - test$score)^2)
+
+#find R-Squared
+rsq <- 1 - sse/sst
+rsq
+```
+
+
+
+
+```{r}
+library(iai)
+```
+
+```{r}
+
+
+
+iai::install_julia()
+iai::install_system_image()
+```
+
+
+```{r}
+grid <- iai::grid_search(
+    iai::optimal_tree_regressor(
+        random_seed = 123,
+    ),
+    max_depth = 1:5,
+)
+iai::fit(grid, train[,1:94], train$score)
+iai::get_learner(grid)
+```
+
+```{r}
+iai::predict(grid, test[,1:94])
+iai::score(grid, train_X, train_y, criterion = "mse")
+iai::score(grid, test_X, test_y, criterion = "mse")
+```
+
